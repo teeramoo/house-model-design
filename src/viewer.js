@@ -1,0 +1,69 @@
+import * as T from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
+import {buildHouse} from './house';
+import {ROOMS} from './plan';
+import {LAND_DEFAULT,validLand,updateLand} from './land';
+import {PaintController,makePaintOutlines} from './paint';
+import {ChairRailController} from './chairRail';
+
+export class HouseViewer {
+ constructor(host,onChange,onPaintChange=()=>{},onRailChange=()=>{}){
+  this.host=host;this.onChange=onChange;this.state={mode:'exterior',floor:0,roof:true,furniture:false,room:null};this.keys=new Set();this.yaw=0;this.pitch=0;this.foot=.6;this.drag=null;this.paused=false;
+  this.scene=new T.Scene();this.scene.background=new T.Color('#eeede8');this.scene.fog=new T.Fog('#eeede8',65,145);
+  this.camera=new T.PerspectiveCamera(45,1,.05,220);this.camera.position.set(22,11,31);
+  this.renderer=new T.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});this.renderer.setPixelRatio(Math.min(devicePixelRatio,2));this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=T.PCFSoftShadowMap;this.renderer.outputColorSpace=T.SRGBColorSpace;this.renderer.toneMapping=T.ACESFilmicToneMapping;this.renderer.toneMappingExposure=1.05;this.renderer.domElement.tabIndex=0;this.renderer.domElement.setAttribute('aria-label','Interactive 3D house. Drag to orbit; in walkthrough use W A S D to move and drag to look.');host.appendChild(this.renderer.domElement);
+  this.controls=new OrbitControls(this.camera,this.renderer.domElement);this.controls.target.set(8,3.1,4.2);this.controls.enableDamping=true;this.controls.dampingFactor=.09;this.controls.minDistance=3;this.controls.maxDistance=60;this.controls.maxPolarAngle=Math.PI*.49;this.controls.update();
+  this.scene.add(new T.HemisphereLight('#f9fcff','#c6bdac',1.8));this.ambient=new T.AmbientLight('#ffffff',.40);this.scene.add(this.ambient);
+  const sun=new T.DirectionalLight('#fff2d9',2.5);sun.position.set(-10,23,16);sun.target.position.set(7,0,4);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-23;sun.shadow.camera.right=23;sun.shadow.camera.top=22;sun.shadow.camera.bottom=-22;sun.shadow.normalBias=.025;sun.shadow.bias=-.00015;sun.shadow.camera.near=1;sun.shadow.camera.far=65;sun.shadow.radius=3;this.scene.add(sun,sun.target);
+  const fill=new T.DirectionalLight('#eef6ff',1.1);fill.position.set(25,15,-12);this.scene.add(fill);
+  this.house=buildHouse();this.land={...LAND_DEFAULT};try{const saved=JSON.parse(localStorage.getItem("supharat-land-v1"));if(validLand(saved))this.land=saved;}catch{}updateLand(this.house,this.land);this.scene.add(this.house.root);const ground=new T.Mesh(new T.PlaneGeometry(300,300),new T.MeshStandardMaterial({color:'#eeede8',roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.set(8,-.16,4);ground.receiveShadow=true;this.scene.add(ground);
+  this.props=[];for(const f of [0,1])this.house.groups['furniture'+f].traverse(o=>{if(o.isMesh&&['Sofa body','Mattress','Wardrobe carcass','Refrigerator','Kitchen base cabinet','Bed base','Vanity cabinet','Freestanding bathtub','Dining tabletop'].includes(o.name)){const b=new T.Box3().setFromObject(o);this.props.push({x0:b.min.x,x1:b.max.x,z0:b.min.z,z1:b.max.z,y0:b.min.y,y1:b.max.y,f});}});
+  this.raycaster=new T.Raycaster();let storage=null;try{storage=window.localStorage;}catch{}this.draftStorage=storage;this.paint=new PaintController(this.house.paintRegistry,{storage,onChange:s=>{this.refreshPaint();onPaintChange(s);}});this.paint.emit();this.rail=new ChairRailController(this.house,{storage,onChange:s=>{this.refreshPaint();onRailChange(s);}});this.rail.emit();
+  this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(host);this.bind();this.applyVisibility();this.resize();this.fitAspect();this.last=performance.now();this.animate=this.animate.bind(this);this.raf=requestAnimationFrame(this.animate);this.emit();
+ }
+ bind(){const c=this.renderer.domElement;this.events=[];const listen=(el,name,fn,opts)=>{el.addEventListener(name,fn,opts);this.events.push(()=>el.removeEventListener(name,fn,opts));};
+  listen(window,'keydown',e=>{if(this.paused||/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName))return;if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){if(this.state.mode==='walk'){e.preventDefault();this.keys.add(e.code);}}if(e.code==='Escape'&&this.state.mode==='walk')this.setView(this.state.floor?'upper':'ground');});
+  listen(window,'keyup',e=>this.keys.delete(e.code));listen(window,'blur',()=>{this.keys.clear();this.drag=null;});listen(document,'visibilitychange',()=>this.keys.clear());
+  listen(c,'pointerdown',e=>{c.focus({preventScroll:true});this.pickStart={x:e.clientX,y:e.clientY};if(this.state.mode==='walk'){this.drag={x:e.clientX,y:e.clientY,id:e.pointerId};c.setPointerCapture(e.pointerId);}});
+  listen(c,'pointermove',e=>{if(this.drag&&this.drag.id===e.pointerId&&this.state.mode==='walk'&&!this.paused){this.yaw-=(e.clientX-this.drag.x)*.004;this.pitch=T.MathUtils.clamp(this.pitch-(e.clientY-this.drag.y)*.003,-1.25,1.25);this.drag.x=e.clientX;this.drag.y=e.clientY;this.look();}});
+  listen(c,'pointerup',e=>{this.drag=null;if(this.design.enabled&&!this.paused&&this.pickStart&&Math.hypot(e.clientX-this.pickStart.x,e.clientY-this.pickStart.y)<5)this.pickWall(e);this.pickStart=null;});listen(c,'pointercancel',()=>{this.drag=null;this.pickStart=null;});
+ }
+ get design(){return this.designTool==='rail'?this.rail:this.paint;}
+ setDesignTool(tool){this.paint.enabled=false;this.rail.enabled=false;this.designTool=tool;this.design.enabled=true;this.paint.emit();this.rail.emit();}
+ visibleObject(o){for(let p=o;p;p=p.parent)if(!p.visible)return false;return true;}
+ pickWall(e){const r=this.renderer.domElement.getBoundingClientRect();this.scene.updateMatrixWorld(true);this.raycaster.setFromCamera(new T.Vector2((e.clientX-r.left)/r.width*2-1,-(e.clientY-r.top)/r.height*2+1),this.camera);const hits=this.raycaster.intersectObject(this.house.root,true);for(const h of hits){if(!h.object.isMesh||!this.visibleObject(h.object)||this.renderer.clippingPlanes.some(p=>p.distanceToPoint(h.point)<0))continue;const m=Array.isArray(h.object.material)?h.object.material[h.face.materialIndex]:h.object.material;if(m?.transparent&&m.opacity<.5)continue;const id=h.object.userData.railWallId||h.object.userData.paintFaces?.[h.face.materialIndex];if(id){this.design.select(id,e.shiftKey);return;}break;}this.design.message='Click the broad plaster surface of a wall.';this.design.emit();}
+ refreshPaint(){const ids=this.design?.enabled?this.design.targets().map(e=>e.id):[];const key=ids.join('|');if(key!==this.outlineKey){if(this.paintOutline){this.scene.remove(this.paintOutline);const mats=new Set();this.paintOutline.traverse(o=>{o.geometry?.dispose();if(o.material)mats.add(o.material);});mats.forEach(m=>m.dispose());}this.house.root.updateMatrixWorld(true);this.paintOutline=makePaintOutlines(this.house.paintRegistry,ids);this.scene.add(this.paintOutline);this.outlineKey=key;}for(const line of this.paintOutline?.children||[])line.visible=this.visibleObject(line.userData.owner);this.renderer.domElement.style.cursor=this.design?.enabled?'crosshair':'';}
+ resize(){const w=this.host.clientWidth,h=this.host.clientHeight;if(!w||!h)return;this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);this.fitAspect();}
+ look(){this.camera.rotation.order='YXZ';this.camera.rotation.set(this.pitch,this.yaw,0);}
+ emit(){this.onChange({...this.state,position:{x:this.camera.position.x,z:this.camera.position.z,yaw:this.yaw},eyeLevel:this.camera.position.y,floorLevel:this.foot});}
+ setView(mode){this.fitFactor=1;this.keys.clear();this.drag=null;this.state.mode=mode;this.state.room=null;this.state.floor=mode==='upper'?1:0;if(mode!=='exterior'&&this.design.scope==='floor')this.design.setFloor(this.state.floor);this.controls.enabled=true;this.camera.fov=45;this.camera.updateProjectionMatrix();this.controls.maxPolarAngle=Math.PI*.49;
+  if(mode==='exterior'){this.camera.position.set(22,11,31);this.controls.target.set(8,3.1,4.2);}else{this.camera.position.set(16,mode==='upper'?24:21,20);this.controls.target.set(8,mode==='upper'?4:0.6,3.5);}this.applyVisibility();this.fitAspect();this.controls.update();this.emit();}
+ fitAspect(){if(this.state.mode==='walk')return;const a=this.host.clientWidth/this.host.clientHeight;const factor=Math.max(1,1.35/a);this.camera.position.sub(this.controls.target).multiplyScalar(factor/(this.fitFactor||1)).add(this.controls.target);this.fitFactor=factor;}
+ applyVisibility(){const s=this.state,g=this.house.groups,cut=s.mode==='ground'||s.mode==='upper';g.site.visible=s.mode!=='upper';g.ground.visible=s.mode!=='upper';g.upper.visible=s.mode!=='ground';g.roof.visible=s.roof&&!cut;g.ceiling0.visible=!cut;g.ceiling1.visible=!cut&&s.roof;g.stairs.visible=true;g.caps0.visible=s.mode==='ground';g.caps1.visible=s.mode==='upper';g.furniture0.visible=s.furniture&&s.mode!=='upper';g.furniture1.visible=s.furniture&&s.mode!=='ground';this.renderer.clippingPlanes=cut?[new T.Plane(new T.Vector3(0,-1,0),(s.floor?4:.6)+1.15)]:[];this.ambient.intensity=s.mode==='walk'?.90:.40;this.refreshPaint();}
+ setLand(config){updateLand(this.house,config);this.land={...config};try{this.draftStorage?.setItem("supharat-land-v1",JSON.stringify(this.land));}catch{}this.setView("exterior");}
+ toggle(name,value){this.state[name]=value;this.applyVisibility();this.emit();}
+ enter(roomId){this.keys.clear();const r=ROOMS.find(r=>r.id===roomId);this.state.mode='walk';this.state.floor=r?.floor||0;this.state.room=r?.id||null;this.controls.enabled=false;this.camera.fov=67;this.camera.updateProjectionMatrix();this.yaw=r?.yaw||0;this.pitch=-.04;let x=r?.x??5.5,z=r?.z??9.5;this.foot=roomId==='carport'?.2:r?(r.floor?4:.6):.5;this.camera.position.set(x,this.foot+1.65,z);this.look();this.applyVisibility();this.emit();this.renderer.domElement.focus({preventScroll:true});}
+ jumpFloor(){this.enter(this.state.floor?'living':'lounge');}
+ pause(v){this.paused=v;this.keys.clear();}
+ blocked(x,z,y){const pad=.17;const candidates=this.state.furniture?[...this.house.walls,...this.props]:this.house.walls;return candidates.some(w=>x>w.x0-pad&&x<w.x1+pad&&z>w.z0-pad&&z<w.z1+pad&&y+1.6>w.y0&&y+.32<w.y1);}
+ upperFootprint(x,z){return (x>=.2&&x<=6.62&&z>=.2&&z<=8.2)||(x>=.2&&x<=4.03&&z>=-.83&&z<.2)||(x>=6.62&&x<=10.45&&z>=3.1&&z<=8.2)||(x>=10.72&&x<=15.64&&z>=-.84&&z<=9.13)||(x>=.95&&x<=3.09&&z>=8.2&&z<=9.08)||(x>=4.27&&x<=6.83&&z>=8.2&&z<=10.4);}
+ surfaceAt(x,z){const points=this.house.stairPath;let nearest={d:999,y:0};for(let i=0;i<points.length-1;i++){const p=points[i],q=points[i+1],dx=q.x-p.x,dz=q.z-p.z,t=T.MathUtils.clamp(((x-p.x)*dx+(z-p.z)*dz)/(dx*dx+dz*dz),0,1),d=Math.hypot(x-p.x-t*dx,z-p.z-t*dz);if(d<nearest.d)nearest={d,y:p.y+(q.y-p.y)*t};}
+  if(nearest.d<.49&&Math.abs(nearest.y-this.foot)<.48)return nearest.y;
+  if(this.foot>2.1){if(this.upperFootprint(x,z))return 4;return null;}
+  if(x< -2.8||x>20.6||z< -4||z>14.7)return null;
+  if((x>=0&&x<=10.6&&z>=0&&z<=8.375)||(x>=0&&x<=4.2&&z>=-1&&z<0)||(x>=10.6&&x<=15.8&&z>=-1&&z<=4.2))return .6;
+  if(x>=4&&x<=7.2&&z>=8.375&&z<=10.7)return .5;
+  if(x>=10.6&&x<=17.95&&z>=4.2&&z<=12.3)return .2;
+  if(x>=10.6&&x<=15.8&&z>=-2.6&&z<-1)return .5;
+  if(x>=4.12&&x<=7.08&&z>10.7&&z<11.6)return Math.max(.05,.35-Math.floor((z-10.7)/.3)*.15);
+  return .025;
+ }
+ move(dx,dz){const p=this.camera.position;for(const axis of ['x','z']){const x=p.x+(axis==='x'?dx:0),z=p.z+(axis==='z'?dz:0);const y=this.surfaceAt(x,z);if(y!==null&&Math.abs(y-this.foot)<.65&&!this.blocked(x,z,y)){p.x=x;p.z=z;this.foot=y;}}p.y=this.foot+1.65;const room=ROOMS.find(r=>r.id===this.state.room);if(room&&Math.hypot(p.x-room.x,p.z-room.z)>1.8)this.state.room=null;const floor=this.foot>2.3?1:0;if(floor!==this.state.floor){this.state.floor=floor;this.state.room=null;this.emit();}}
+ animate(now){const dt=Math.min((now-this.last)/1000,.05);this.last=now;
+  if(this.state.mode==='walk'&&!this.paused){let f=(this.keys.has('KeyW')||this.keys.has('ArrowUp')?1:0)-(this.keys.has('KeyS')||this.keys.has('ArrowDown')?1:0),r=(this.keys.has('KeyD')||this.keys.has('ArrowRight')?1:0)-(this.keys.has('KeyA')||this.keys.has('ArrowLeft')?1:0);const norm=Math.hypot(f,r)||1,speed=(this.keys.has('ShiftLeft')?3.2:1.9)*dt;this.move((-Math.sin(this.yaw)*f+Math.cos(this.yaw)*r)/norm*speed,(-Math.cos(this.yaw)*f-Math.sin(this.yaw)*r)/norm*speed);this.look();if(now-(this.lastEmit||0)>150){this.emit();this.lastEmit=now;}}
+  else if(this.controls.enabled)this.controls.update();this.renderer.render(this.scene,this.camera);this.raf=requestAnimationFrame(this.animate);
+ }
+ async exportModel(){await this.furnitureScene?.pending;if(this.furnitureScene?.errors.length)throw new Error('Some furniture models could not load. Reopen the design after reconnecting before exporting.');const vis=[];this.house.root.traverse(o=>{vis.push([o,o.visible]);o.visible=o.name!=='Section caps';});try{this.house.root.updateMatrixWorld(true);const data=await new GLTFExporter().parseAsync(this.house.root,{binary:true,onlyVisible:true});return new Blob([data],{type:'model/gltf-binary'});}finally{vis.forEach(([o,v])=>o.visible=v);}}
+ destroy(){cancelAnimationFrame(this.raf);this.resizeObserver.disconnect();this.events.forEach(f=>f());this.controls.dispose();const mats=new Set(),tex=new Set();this.scene.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)for(const m of Array.isArray(o.material)?o.material:[o.material])mats.add(m);});mats.forEach(m=>{for(const v of Object.values(m))if(v?.isTexture)tex.add(v);m.dispose();});tex.forEach(t=>t.dispose());this.renderer.dispose();this.renderer.domElement.remove();}
+}
