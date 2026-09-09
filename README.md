@@ -31,3 +31,7 @@ For Cloudflare Pages, use build command `npm run build` and output directory `di
 The house and embedded reference drawings are included in this public source. Geometry is interpreted from the supplied plans and is an architectural visualization, not verified construction or BIM documentation. Land dimensions are estimated. Building proposals are empty shells without openings, stairs or collision checks. Furniture uses numeric placement without snapping. Save named designs to retain their history across sessions.
 
 SQL test fixtures are for disposable local databases only; never run them in the hosted Supabase project.
+
+## Live GitHub Pages deployment
+
+The site deploys from `main` using `.github/workflows/pages.yml`. Tests run before each build and deployment. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` as GitHub repository Actions variables, then rerun the workflow to enable the backend. Add `https://teeramoo.github.io/house-model-design/` to Supabase's allowed redirect URLs. Never store Google client secrets or service-role keys as frontend variables.
