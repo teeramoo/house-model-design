@@ -56,4 +56,8 @@ validateBuildings([shell]);const shellMesh=buildingMesh(shell);assert.equal(shel
 assert.throws(()=>validateBuildings([{...shell,points:[[0,0],[4,4],[0,4],[4,0]]}]));assert.throws(()=>validateBuildings([{...shell,height:NaN}]));
 viewer.buildings.set([shell]);cloud.history.record('Building');const shellDoc=captureDesign(viewer),shellHistory=cloud.history.document();cloud.history.go(cloud.history.cursor-1);assert.equal(viewer.buildings.items.length,0);cloud.history.load(shellDoc,shellHistory);assert.deepEqual(viewer.buildings.document(),[shell]);cloud.duplicate(true);assert.equal(viewer.buildings.items.length,0);
 console.log('PASS: building geometry, invalid polygon rejection, saved shell history, undo and baseline isolation');
+let profilePayload;backend.auth.updateUser=async payload=>{profilePayload=payload;return {data:{user:{...cloud.state.user,user_metadata:payload.data}}};};
+await cloud.updateProfile('  Family designer  ');assert.deepEqual(profilePayload,{data:{display_name:'Family designer'}});assert.equal(cloud.state.user.user_metadata.display_name,'Family designer');
+await cloud.updateProfile(' ');assert.ok(cloud.state.error);let signoutScope;backend.auth.signOut=async options=>{signoutScope=options.scope;return {};};await cloud.signOut('global');assert.equal(signoutScope,'global');assert.equal(cloud.state.user,null);
+console.log('PASS: profile name validation, metadata-only update and all-device signout');
 cloud.dispose();console.log('PASS: guest/account draft isolation, cloud snapshot save/open/restore, invalid-load atomicity, stale account response discarded');

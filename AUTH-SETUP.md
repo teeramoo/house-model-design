@@ -92,3 +92,13 @@ Only use the intended owner's UUID. Users cannot grant themselves this role. Ref
 Four procedural starter assets—chair, sofa, table and bed—work without cloud setup. Search by name/category, choose a room, then Add. Position X/Z, floor, rotation and uniform scale can be changed; number edits apply on blur or Enter. Up to 100 placements per design. Close the panel to inspect the 3D scene. Placement is numeric, without drag handles, collision prevention or wall snapping. Original illustrative furniture remains a separate display toggle. Save the private design to retain placements and undo history across sessions. Missing uploaded assets retain their placement data and show an error; reconnect and reopen the design to retry. Export waits for asset loading and refuses an incomplete export.
 
 `npm test` covers placement validation, real starter geometry/GLB parsing, upload orchestration with a mock backend, save/load and undo, and account isolation. `tests/furniture-rls.sql` validates permissions using mock Storage tables in a disposable PostgreSQL database after the original auth fixture and two design migrations; never run test fixtures in Supabase. Hosted Google login and actual Storage upload/download remain to be checked after configuration.
+
+## Account management and owner dashboard
+
+Run `supabase/migrations/202609160001_account_management.sql` after all earlier migrations. It backfills account records and maintains them on future sign-ins. In the Supabase SQL editor, assign your verified user UUID from Authentication > Users:
+
+```sql
+update public.account_access set role='owner' where user_id='YOUR_VERIFIED_AUTH_USER_UUID';
+```
+
+Reload the site and open Account. The owner can view member emails, suspend/restore cloud access, and assign furniture-library managers. Members appear after first sign-in; new accounts are active by default. Suspension preserves designs and blocks access through database/storage policies; it does not ban Google login or hide the public static house. Owners cannot be suspended or promoted through this UI. Profile names are user-editable metadata and never determine permissions. Sign out everywhere revokes refresh sessions; issued access tokens expire normally. This feature does not delete accounts or send invitations.
