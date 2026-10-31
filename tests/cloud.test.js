@@ -1,3 +1,5 @@
+import {LG_FRIDGE} from '../src/lgFridge';
+import {Box3,Vector3} from 'three';
 import {buildingMesh,validateBuildings,footprint} from '../src/buildings';
 import {validatePlacements,validateGLB,FurnitureLibrary} from '../src/furniture';
 import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
@@ -60,4 +62,5 @@ let profilePayload;backend.auth.updateUser=async payload=>{profilePayload=payloa
 await cloud.updateProfile('  Family designer  ');assert.deepEqual(profilePayload,{data:{display_name:'Family designer'}});assert.equal(cloud.state.user.user_metadata.display_name,'Family designer');
 await cloud.updateProfile(' ');assert.ok(cloud.state.error);let signoutScope;backend.auth.signOut=async options=>{signoutScope=options.scope;return {};};await cloud.signOut('global');assert.equal(signoutScope,'global');assert.equal(cloud.state.user,null);
 console.log('PASS: profile name validation, metadata-only update and all-device signout');
+const fridge=await library.model(LG_FRIDGE.id);const fridgeSize=new Box3().setFromObject(fridge).getSize(new Vector3());for(const [actual,expected] of [[fridgeSize.x,.830],[fridgeSize.y,1.920],[fridgeSize.z,.595]])assert.ok(Math.abs(actual-expected)<.00001);validatePlacements([{...placement,assetId:LG_FRIDGE.id}]);validateGLB(await new GLTFExporter().parseAsync(fridge,{binary:true}));console.log('PASS: LG fridge dimensions, placement validation and GLB export');
 cloud.dispose();console.log('PASS: guest/account draft isolation, cloud snapshot save/open/restore, invalid-load atomicity, stale account response discarded');
